@@ -1,5 +1,6 @@
 package mikey.me.antiBase;
 
+import com.github.retrooper.packetevents.PacketEvents;
 import org.bukkit.plugin.java.JavaPlugin;
 
 public final class AntiBase extends JavaPlugin {
@@ -17,7 +18,7 @@ public final class AntiBase extends JavaPlugin {
         BaseObfuscator obfuscator = new BaseObfuscator(hideBelowY, proximityDistance, replacementBlock);
 
         packetHandler = new PacketHandler(this, obfuscator);
-        com.comphenix.protocol.ProtocolLibrary.getProtocolManager().addPacketListener(packetHandler);
+        PacketEvents.getAPI().getEventManager().registerListener(packetHandler);
 
         new ObfuscationTask(this, obfuscator).runTaskTimer(this, 20L, 20L);
 
@@ -32,7 +33,7 @@ public final class AntiBase extends JavaPlugin {
     @Override
     public void onDisable() {
         if (packetHandler != null) {
-            com.comphenix.protocol.ProtocolLibrary.getProtocolManager().removePacketListener(packetHandler);
+            PacketEvents.getAPI().getEventManager().unregisterListener(packetHandler);
         }
     }
 }

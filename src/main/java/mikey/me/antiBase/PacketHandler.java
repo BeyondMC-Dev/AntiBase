@@ -1,11 +1,16 @@
 package mikey.me.antiBase;
 
-import com.comphenix.protocol.PacketType;
-import com.comphenix.protocol.events.PacketAdapter;
-import com.comphenix.protocol.events.PacketContainer;
-import com.comphenix.protocol.events.PacketEvent;
-import com.comphenix.protocol.wrappers.BlockPosition;
-import com.comphenix.protocol.wrappers.WrappedBlockData;
+import com.github.retrooper.packetevents.event.PacketListenerAbstract;
+import com.github.retrooper.packetevents.event.PacketListenerPriority;
+import com.github.retrooper.packetevents.event.PacketSendEvent;
+import com.github.retrooper.packetevents.protocol.packettype.PacketType;
+import com.github.retrooper.packetevents.protocol.packettype.PacketTypeCommon;
+import com.github.retrooper.packetevents.protocol.world.states.WrappedBlockState;
+import com.github.retrooper.packetevents.util.Vector3i;
+import com.github.retrooper.packetevents.wrapper.play.server.WrapperPlayServerBlockChange;
+import com.github.retrooper.packetevents.wrapper.play.server.WrapperPlayServerChunkData;
+import com.github.retrooper.packetevents.wrapper.play.server.WrapperPlayServerSpawnEntity;
+import com.github.retrooper.packetevents.wrapper.play.server.WrapperPlayServerSpawnPlayer;
 import org.bukkit.Bukkit;
 import org.bukkit.Chunk;
 import org.bukkit.Material;
@@ -13,52 +18,51 @@ import org.bukkit.World;
 import org.bukkit.entity.Player;
 import org.bukkit.plugin.Plugin;
 
-public class PacketHandler extends PacketAdapter {
+public class PacketHandler extends PacketListenerAbstract {
     private final BaseObfuscator obfuscator;
     private final Plugin plugin;
 
     public PacketHandler(Plugin plugin, BaseObfuscator obfuscator) {
-        super(plugin, PacketType.Play.Server.BLOCK_CHANGE, PacketType.Play.Server.MULTI_BLOCK_CHANGE,
-                PacketType.Play.Server.MAP_CHUNK, PacketType.Play.Server.SPAWN_ENTITY,
-                PacketType.Play.Server.NAMED_ENTITY_SPAWN);
+        super(PacketListenerPriority.NORMAL);
         this.plugin = plugin;
         this.obfuscator = obfuscator;
     }
 
     @Override
-    public void onPacketSending(PacketEvent event) {
-        Player player = event.getPlayer();
-        PacketType type = event.getPacketType();
+    public void onPacketSend(PacketSendEvent event) {
+        Player player = (Player) event.getPlayer();
+        PacketTypeCommon type = event.getPacketType();
 
         if (type == PacketType.Play.Server.BLOCK_CHANGE) {
             handleBlockChange(event, player);
         } else if (type == PacketType.Play.Server.MULTI_BLOCK_CHANGE) {
             handleMultiBlockChange(event, player);
-        } else if (type == PacketType.Play.Server.MAP_CHUNK) {
+        } else if (type == PacketType.Play.Server.CHUNK_DATA) {
             handleMapChunk(event, player);
-        } else if (type == PacketType.Play.Server.SPAWN_ENTITY || type == PacketType.Play.Server.NAMED_ENTITY_SPAWN) {
+        } else if (type == PacketType.Play.Server.SPAWN_ENTITY || type == PacketType.Play.Server.SPAWN_PLAYER) {
             handleSpawnEntity(event, player);
         }
     }
 
-    private void handleBlockChange(PacketEvent event, Player player) {
-        PacketContainer packet = event.getPacket();
-        BlockPosition pos = packet.getBlockPositionModifier().read(0);
-        WrappedBlockData blockData = packet.getBlockData().read(0);
-        Material type = blockData.getType();
+    private void handleBlockChange(PacketSendEvent event, Player player) {
+        WrapperPlayServerBlockChange wrapper = new WrapperPlayServerBlockChange(event);
+        Vector3i pos = wrapper.getBlockPosition();
+        WrappedBlockState blockState = wrapper.getBlockState();
+        String blockName = blockState.getType().getName().toUpperCase().replace("MINECRAFT:", "");
+        Material type = Material.getMaterial(blockName);
 
-        if (obfuscator.shouldObfuscate(type, pos.getX(), pos.getY(), pos.getZ(), player)) {
-            packet.getBlockData().write(0, WrappedBlockData.createData(obfuscator.getReplacementBlock()));
+        if (type != null && obfuscator.shouldObfuscate(type, pos.getX(), pos.getY(), pos.getZ(), player)) {
+            wrapper.setBlockState(WrappedBlockState.getByString("minecraft:" + obfuscator.getReplacementBlock().name().toLowerCase()));
         }
     }
 
-    private void handleMultiBlockChange(PacketEvent event, Player player) {
+    private void handleMultiBlockChange(PacketSendEvent event, Player player) {
     }
 
-    private void handleMapChunk(PacketEvent event, Player player) {
-        PacketContainer packet = event.getPacket();
-        int cx = packet.getIntegers().read(0);
-        int cz = packet.getIntegers().read(1);
+    private void handleMapChunk(PacketSendEvent event, Player player) {
+        WrapperPlayServerChunkData wrapper = new WrapperPlayServerChunkData(event);
+        int cx = wrapper.getColumn().getX();
+        int cz = wrapper.getColumn().getZ();
 
         Bukkit.getScheduler().runTask(plugin, () -> {
             if (!player.isOnline())
@@ -114,10 +118,23 @@ public class PacketHandler extends PacketAdapter {
         });
     }
 
-    private void handleSpawnEntity(PacketEvent event, Player player) {
-        PacketContainer packet = event.getPacket();
+    private void handleSpawnEntity(PacketSendEvent event, Player player) {
+        int entityId;
+        if (event.getPacketType() == PacketType.Play.Server.SPAWN_ENTITY) {
+            WrapperPlayServerSpawnEntity wrapper = new WrapperPlayServerSpawnEntity(event);
+            entityId = wrapper.getEntityId();
+        } else {
+            WrapperPlayServerSpawnPlayer wrapper = new WrapperPlayServerSpawnPlayer(event);
+            entityId = wrapper.getEntityId();
+        }
 
-        org.bukkit.entity.Entity entity = packet.getEntityModifier(player.getWorld()).read(0);
+        org.bukkit.entity.Entity entity = null;
+        for (org.bukkit.entity.Entity e : player.getWorld().getEntities()) {
+            if (e.getEntityId() == entityId) {
+                entity = e;
+                break;
+            }
+        }
 
         if (entity != null) {
             if (obfuscator.shouldHideEntity(entity, player)) {
