@@ -2,7 +2,6 @@ package mikey.me.antiBase;
 
 import org.bukkit.Material;
 import org.bukkit.World;
-import java.util.UUID;
 import java.util.Set;
 import java.util.HashSet;
 import java.util.List;
@@ -30,5 +29,4 @@ public class BaseObfuscator {
     public int getHideBelowY() { return hideBelowY; }
     public int getProximityDistance() { return proximityDistance; }
     public boolean isWorldBlacklisted(World world) { return blacklistedWorlds.contains(world.getName()); }
-    public void clear(UUID playerId) { }
 }

@@ -8,7 +8,6 @@ import com.github.retrooper.packetevents.protocol.packettype.PacketTypeCommon;
 import com.github.retrooper.packetevents.wrapper.play.server.*;
 import com.github.retrooper.packetevents.protocol.world.chunk.Column;
 import com.github.retrooper.packetevents.protocol.world.chunk.BaseChunk;
-import org.bukkit.plugin.Plugin;
 import org.bukkit.entity.Player;
 import org.bukkit.Material;
 import java.util.UUID;
@@ -18,9 +17,9 @@ import io.github.retrooper.packetevents.util.SpigotConversionUtil;
 
 public class PacketHandler extends PacketListenerAbstract {
     private final BaseObfuscator obfuscator;
-    private final Plugin plugin;
+    private final AntiBase plugin;
 
-    public PacketHandler(Plugin plugin, BaseObfuscator obfuscator) {
+    public PacketHandler(AntiBase plugin, BaseObfuscator obfuscator) {
         super(PacketListenerPriority.HIGH);
         this.plugin = plugin;
         this.obfuscator = obfuscator;
@@ -29,7 +28,7 @@ public class PacketHandler extends PacketListenerAbstract {
     @Override
     public void onPacketSend(PacketSendEvent event) {
         try {
-            Player player = (Player) event.getPlayer();
+            Player player = event.getPlayer();
             if (player == null) return;
             if (obfuscator.isWorldBlacklisted(player.getWorld())) return;
             UUID playerId = player.getUniqueId();
@@ -68,7 +67,7 @@ public class PacketHandler extends PacketListenerAbstract {
                                     continue; 
                                 }
 
-                                if (plugin instanceof AntiBase && !((AntiBase) plugin).isSectionVisible(playerId, chunkX, sectionBaseY >> 4, chunkZ)) {
+                                if (!plugin.isSectionVisible(playerId, chunkX, sectionBaseY >> 4, chunkZ)) {
                                     clearChunkSection(section);
                                     modified = true;
                                 }
@@ -89,28 +88,25 @@ public class PacketHandler extends PacketListenerAbstract {
                 return;
             }
 
-            // this might work?? 
+            // Prevent the player from being removed from tab and chat completion
 
             if (type.getName().equals(PacketType.Play.Server.PLAYER_INFO_REMOVE.getName())) {
                 WrapperPlayServerPlayerInfoRemove removeInfo = new WrapperPlayServerPlayerInfoRemove(event);
                 List<UUID> uuids = removeInfo.getProfileIds();
                 List<UUID> newUUIDs = new ArrayList<>();
                 boolean changed = false;
-                if (plugin instanceof AntiBase) {
-                    AntiBase antiBase = (AntiBase) plugin;
-                    for (UUID uuid : uuids) {
-                        if (antiBase.isHidden(playerId, uuid)) {
-                            changed = true;
-                        } else {
-                            newUUIDs.add(uuid);
-                        }
+                for (UUID uuid : uuids) {
+                    if (plugin.isHidden(playerId, uuid)) {
+                        changed = true;
+                    } else {
+                        newUUIDs.add(uuid);
                     }
-                    if (changed) {
-                        if (newUUIDs.isEmpty()) {
-                            event.setCancelled(true);
-                        } else {
-                            removeInfo.setProfileIds(newUUIDs);
-                        }
+                }
+                if (changed) {
+                    if (newUUIDs.isEmpty()) {
+                        event.setCancelled(true);
+                    } else {
+                        removeInfo.setProfileIds(newUUIDs);
                     }
                 }
             }
