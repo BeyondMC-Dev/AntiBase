@@ -1,7 +1,6 @@
 package mikey.me.antiBase;
 
 import org.bukkit.block.Block;
-import org.bukkit.block.BlockFace;
 import org.bukkit.event.EventHandler;
 import org.bukkit.event.Listener;
 import org.bukkit.event.block.BlockBreakEvent;
@@ -25,9 +24,10 @@ public class MiningListener implements Listener {
         int hideBelow = obfuscator.getHideBelowY();
         int buffer = obfuscator.getProximityDistance();
         
-
         if (y > (hideBelow + buffer + 16)) return;
+
         ((AntiBase) plugin).getMovementListener().updateVisibility(event.getPlayer());
+
         int radius = 2; 
         for (int x = -radius; x <= radius; x++) {
             for (int dy = -radius; dy <= radius; dy++) {

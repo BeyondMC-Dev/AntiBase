@@ -161,15 +161,27 @@ public class MovementListener implements Listener {
             int ez = e.getLocation().getBlockZ();
             if (ey < hideBelow) {
                 if (!visibleBlocks.contains(AntiBase.packCoord(ex, ey, ez))) {
-                    if (e instanceof Player) player.hidePlayer(plugin, (Player) e);
-                    else player.hideEntity(plugin, e);
+                    if (e instanceof Player) {
+                        player.hidePlayer(plugin, (Player) e);
+                        ((AntiBase) plugin).setHidden(player.getUniqueId(), e.getUniqueId(), true);
+                    } else {
+                        player.hideEntity(plugin, e);
+                    }
                 } else {
-                    if (e instanceof Player) player.showPlayer(plugin, (Player) e);
-                    else player.showEntity(plugin, e);
+                    if (e instanceof Player) {
+                        player.showPlayer(plugin, (Player) e);
+                        ((AntiBase) plugin).setHidden(player.getUniqueId(), e.getUniqueId(), false);
+                    } else {
+                        player.showEntity(plugin, e);
+                    }
                 }
             } else {
-                if (e instanceof Player) player.showPlayer(plugin, (Player) e);
-                else player.showEntity(plugin, e);
+                if (e instanceof Player) {
+                    player.showPlayer(plugin, (Player) e);
+                    ((AntiBase) plugin).setHidden(player.getUniqueId(), e.getUniqueId(), false);
+                } else {
+                    player.showEntity(plugin, e);
+                }
             }
         }
     }
@@ -193,11 +205,14 @@ public class MovementListener implements Listener {
             if (ey < hideBelow) {
                 if (!antiBase.isBlockVisible(other.getUniqueId(), ex, ey, ez)) {
                     other.hidePlayer(plugin, movingPlayer);
+                    antiBase.setHidden(other.getUniqueId(), movingPlayer.getUniqueId(), true);
                 } else {
                     other.showPlayer(plugin, movingPlayer);
+                    antiBase.setHidden(other.getUniqueId(), movingPlayer.getUniqueId(), false);
                 }
             } else {
                 other.showPlayer(plugin, movingPlayer);
+                antiBase.setHidden(other.getUniqueId(), movingPlayer.getUniqueId(), false);
             }
         }
     }

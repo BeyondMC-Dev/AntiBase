@@ -12,6 +12,8 @@ import org.bukkit.plugin.Plugin;
 import org.bukkit.entity.Player;
 import org.bukkit.Material;
 import java.util.UUID;
+import java.util.List;
+import java.util.ArrayList;
 import io.github.retrooper.packetevents.util.SpigotConversionUtil;
 
 public class PacketHandler extends PacketListenerAbstract {
@@ -56,12 +58,10 @@ public class PacketHandler extends PacketListenerAbstract {
                             BaseChunk section = chunks[i];
                             if (section == null) continue;
                             
-        
                             int sectionBaseY = minHeight + (i * 16);
                             int sectionMaxY = sectionBaseY + 16;
 
                             if (sectionMaxY <= hideBelow) {
-
                                 boolean isNearY = (playerY >= sectionBaseY - 32 && playerY <= sectionMaxY + 32);
                                 
                                 if (isNearChunk && isNearY) {
@@ -86,7 +86,35 @@ public class PacketHandler extends PacketListenerAbstract {
             if (type.getName().equals(PacketType.Play.Server.BLOCK_CHANGE.getName())) {
                 WrapperPlayServerBlockChange blockChange = new WrapperPlayServerBlockChange(event);
                 handleSingleBlockUpdate(player, blockChange.getBlockPosition().getX(), blockChange.getBlockPosition().getY(), blockChange.getBlockPosition().getZ(), blockChange);
+                return;
             }
+
+            // this might work?? 
+
+            if (type.getName().equals(PacketType.Play.Server.PLAYER_INFO_REMOVE.getName())) {
+                WrapperPlayServerPlayerInfoRemove removeInfo = new WrapperPlayServerPlayerInfoRemove(event);
+                List<UUID> uuids = removeInfo.getProfileIds();
+                List<UUID> newUUIDs = new ArrayList<>();
+                boolean changed = false;
+                if (plugin instanceof AntiBase) {
+                    AntiBase antiBase = (AntiBase) plugin;
+                    for (UUID uuid : uuids) {
+                        if (antiBase.isHidden(playerId, uuid)) {
+                            changed = true;
+                        } else {
+                            newUUIDs.add(uuid);
+                        }
+                    }
+                    if (changed) {
+                        if (newUUIDs.isEmpty()) {
+                            event.setCancelled(true);
+                        } else {
+                            removeInfo.setProfileIds(newUUIDs);
+                        }
+                    }
+                }
+            }
+
         } catch (Exception e) {
             plugin.getLogger().severe("Error in PacketHandler: " + e.getMessage());
             e.printStackTrace();

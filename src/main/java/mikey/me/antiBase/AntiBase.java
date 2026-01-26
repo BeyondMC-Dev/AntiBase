@@ -12,6 +12,7 @@ import java.util.List;
 public final class AntiBase extends JavaPlugin {
     private final Map<UUID, Set<Long>> visibleSections = new ConcurrentHashMap<>();
     private final Map<UUID, Set<Long>> visibleBlocks = new ConcurrentHashMap<>();
+    private final Map<UUID, Set<UUID>> hiddenPlayers = new ConcurrentHashMap<>();
     private final Set<UUID> debugPlayers = Collections.newSetFromMap(new ConcurrentHashMap<>());
     private MovementListener movementListener;
 
@@ -34,9 +35,14 @@ public final class AntiBase extends JavaPlugin {
         getServer().getPluginManager().registerEvents(new org.bukkit.event.Listener() {
             @org.bukkit.event.EventHandler
             public void onQuit(org.bukkit.event.player.PlayerQuitEvent event) {
-                obfuscator.clear(event.getPlayer().getUniqueId());
-                visibleSections.remove(event.getPlayer().getUniqueId());
-                visibleBlocks.remove(event.getPlayer().getUniqueId());
+                UUID uuid = event.getPlayer().getUniqueId();
+                obfuscator.clear(uuid);
+                visibleSections.remove(uuid);
+                visibleBlocks.remove(uuid);
+                hiddenPlayers.remove(uuid);
+                for (Set<UUID> hidden : hiddenPlayers.values()) {
+                    hidden.remove(uuid);
+                }
             }
 
             @org.bukkit.event.EventHandler
@@ -68,6 +74,20 @@ public final class AntiBase extends JavaPlugin {
     public boolean isBlockVisible(UUID playerId, int x, int y, int z) {
         Set<Long> blocks = visibleBlocks.get(playerId);
         return blocks != null && blocks.contains(packCoord(x, y, z));
+    }
+
+    public void setHidden(UUID viewerId, UUID targetId, boolean hidden) {
+        Set<UUID> hiddenSet = hiddenPlayers.computeIfAbsent(viewerId, k -> Collections.newSetFromMap(new ConcurrentHashMap<>()));
+        if (hidden) {
+            hiddenSet.add(targetId);
+        } else {
+            hiddenSet.remove(targetId);
+        }
+    }
+
+    public boolean isHidden(UUID viewerId, UUID targetId) {
+        Set<UUID> hiddenSet = hiddenPlayers.get(viewerId);
+        return hiddenSet != null && hiddenSet.contains(targetId);
     }
 
     public void setVisibleBlocks(UUID playerId, Set<Long> blocks) { visibleBlocks.put(playerId, blocks); }

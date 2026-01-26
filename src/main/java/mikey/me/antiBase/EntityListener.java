@@ -36,15 +36,27 @@ public class EntityListener implements Listener {
             if (dx * dx + dy * dy + dz * dz > 25600) continue;
             if (ey < hideBelow) {
                 if (!plugin.isBlockVisible(p.getUniqueId(), ex, ey, ez)) {
-                    if (entity instanceof Player) p.hidePlayer(plugin, (Player) entity);
-                    else p.hideEntity(plugin, entity);
+                    if (entity instanceof Player) {
+                        p.hidePlayer(plugin, (Player) entity);
+                        plugin.setHidden(p.getUniqueId(), entity.getUniqueId(), true);
+                    } else {
+                        p.hideEntity(plugin, entity);
+                    }
                 } else {
-                    if (entity instanceof Player) p.showPlayer(plugin, (Player) entity);
-                    else p.showEntity(plugin, entity);
+                    if (entity instanceof Player) {
+                        p.showPlayer(plugin, (Player) entity);
+                        plugin.setHidden(p.getUniqueId(), entity.getUniqueId(), false);
+                    } else {
+                        p.showEntity(plugin, entity);
+                    }
                 }
             } else {
-                if (entity instanceof Player) p.showPlayer(plugin, (Player) entity);
-                else p.showEntity(plugin, entity);
+                if (entity instanceof Player) {
+                    p.showPlayer(plugin, (Player) entity);
+                    plugin.setHidden(p.getUniqueId(), entity.getUniqueId(), false);
+                } else {
+                    p.showEntity(plugin, entity);
+                }
             }
         }
     }
