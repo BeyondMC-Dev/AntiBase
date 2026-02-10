@@ -45,6 +45,7 @@ public class MiningListener implements Listener {
                     }
                 }
             }
+            plugin.getMovementListener().updateVisibility(player);
         }, null, 2L);
     }
 }

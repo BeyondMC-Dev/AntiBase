@@ -42,6 +42,11 @@ public final class AntiBase extends JavaPlugin {
         getServer().getCommandMap().register("antibase", new AntibaseCommand(this));
     }
 
+    @Override
+    public void onDisable() {
+        movementListener.shutdown();
+    }
+
     public boolean isSectionVisible(UUID playerId, int chunkX, int sectionY, int chunkZ) {
         LongHashSet visible = visibleSections.get(playerId);
         return visible != null && visible.contains(packSection(chunkX, sectionY, chunkZ));

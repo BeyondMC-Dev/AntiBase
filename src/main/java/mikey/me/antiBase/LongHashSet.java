@@ -71,7 +71,7 @@ public class LongHashSet {
 
     public void clear() {
         if (size > 0) {
-            java.util.Arrays.fill(table, EMPTY);
+            Arrays.fill(table, EMPTY);
             size = 0;
         }
     }

@@ -12,38 +12,33 @@ import org.bukkit.entity.Player;
 import net.kyori.adventure.text.minimessage.MiniMessage;
 import org.bukkit.event.player.PlayerTeleportEvent;
 
+import org.bukkit.Material;
+
 import java.util.UUID;
 import java.util.Set;
+import java.util.EnumSet;
 import java.util.HashSet;
 import java.util.Map;
 import java.util.HashMap;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
 
 public class MovementListener implements Listener {
     private static final int[][] NEIGHBORS = {{1,0,0}, {-1,0,0}, {0,1,0}, {0,-1,0}, {0,0,1}, {0,0,-1}};
+    private static final Set<Material> PASSTHROUGH_BLOCKS = EnumSet.of(
+        Material.WATER, Material.LAVA, Material.FIRE, Material.SOUL_FIRE,
+        Material.SHORT_GRASS, Material.TALL_GRASS, Material.FERN, Material.LARGE_FERN
+    );
     private final AntiBase plugin;
     private final BaseObfuscator obfuscator;
+    private final ExecutorService bfsExecutor = Executors.newFixedThreadPool(2);
     private final Map<UUID, Long> lastUpdateTick = new ConcurrentHashMap<>();
     private final Map<UUID, LongHashSet> playerVisibleSections = new ConcurrentHashMap<>();
     private final Map<UUID, BFSContext> bfsContexts = new ConcurrentHashMap<>();
     private final Map<UUID, long[]> lastBFSPosition = new ConcurrentHashMap<>();
-
-    private static class BFSContext {
-        final int[] queueX = new int[100000];
-        final int[] queueY = new int[100000];
-        final int[] queueZ = new int[100000];
-        final LongHashSet visitedBlocks = new LongHashSet(200000);
-        final LongHashSet visibleBlocks = new LongHashSet(50000);
-        final LongHashSet newVisibleSections = new LongHashSet(4096);
-        final HashMap<Long, Chunk> chunkCache = new HashMap<>();
-
-        void clear() {
-            visitedBlocks.clear();
-            visibleBlocks.clear();
-            newVisibleSections.clear();
-            chunkCache.clear();
-        }
-    }
+    private final Set<UUID> bfsRunning = ConcurrentHashMap.newKeySet();
 
     public MovementListener(AntiBase plugin, BaseObfuscator obfuscator) {
         this.plugin = plugin;
@@ -63,14 +58,19 @@ public class MovementListener implements Listener {
         int by = to.getBlockY();
         int bz = to.getBlockZ();
         long[] lastPos = lastBFSPosition.get(player.getUniqueId());
+        boolean needsRestart = lastPos == null;
         if (lastPos != null) {
             long dx = bx - lastPos[0];
             long dy = by - lastPos[1];
             long dz = bz - lastPos[2];
-            if (dx * dx + dy * dy + dz * dz < 4) return;
+            if (dx * dx + dy * dy + dz * dz >= 4) {
+                needsRestart = true;
+            }
         }
-        lastBFSPosition.put(player.getUniqueId(), new long[]{bx, by, bz});
 
+        if (!needsRestart) return;
+
+        lastBFSPosition.put(player.getUniqueId(), new long[]{bx, by, bz});
         updateVisibility(player);
         updateOthersViewOfPlayer(player);
     }
@@ -89,84 +89,136 @@ public class MovementListener implements Listener {
         if (obfuscator.isWorldBlacklisted(player.getWorld())) return;
         int hideBelow = obfuscator.getHideBelowY();
         Location playerLoc = player.getLocation();
+        UUID playerId = player.getUniqueId();
 
         if (playerLoc.getBlockY() > hideBelow + 32) {
+            // Clear visible sections when player is above ground so we refresh their chunk when they descend
+            playerVisibleSections.remove(playerId);
             updateEntitiesVisibility(player, null);
             return;
         }
 
+        // If player has no visible sections yet, they just entered the underground zone
+        boolean justEnteredZone = !playerVisibleSections.containsKey(playerId);
+
+        if (!bfsRunning.add(playerId)) return;
+
         World world = player.getWorld();
         int minHeight = world.getMinHeight();
         int maxHeight = world.getMaxHeight();
+        String worldName = world.getName();
 
-        BFSContext ctx = bfsContexts.computeIfAbsent(player.getUniqueId(), k -> new BFSContext());
-        ctx.clear();
-
-        int head = 0;
-        int tail = 0;
-        int size = 0;
         int startX = playerLoc.getBlockX();
         int startY = Math.max(minHeight, Math.min(maxHeight - 1, playerLoc.getBlockY()));
         int startZ = playerLoc.getBlockZ();
-        ctx.queueX[tail] = startX;
-        ctx.queueY[tail] = startY;
-        ctx.queueZ[tail] = startZ;
-        tail = (tail + 1) % 100000;
-        size++;
-        ctx.visitedBlocks.add(plugin.packCoord(startX, startY, startZ));
-        int maxDistance = 160;
-        int maxDistSq = maxDistance * maxDistance;
-        int blocksChecked = 0;
-        int maxBlocks = 100000;
-        while (size > 0 && blocksChecked < maxBlocks) {
-            int x = ctx.queueX[head];
-            int y = ctx.queueY[head];
-            int z = ctx.queueZ[head];
-            head = (head + 1) % 100000;
-            size--;
-            int dx = x - startX;
-            int dy = y - startY;
-            int dz = z - startZ;
-            if (dx * dx + dy * dy + dz * dz > maxDistSq) continue;
-            if (y < hideBelow) {
-                ctx.newVisibleSections.add(plugin.packSection(x >> 4, y >> 4, z >> 4));
-                ctx.visibleBlocks.add(plugin.packCoord(x, y, z));
-            }
-            for (int[] n : NEIGHBORS) {
-                int nx = x + n[0], ny = y + n[1], nz = z + n[2];
-                if (ny < minHeight || ny >= maxHeight) continue;
-                long key = plugin.packCoord(nx, ny, nz);
-                if (ctx.visitedBlocks.add(key)) {
-                    int cx = nx >> 4;
-                    int cz = nz >> 4;
-                    if (!world.isChunkLoaded(cx, cz)) continue;
-                    long chunkKey = ((long)cx << 32) | (cz & 0xFFFFFFFFL);
-                    Chunk chunk = ctx.chunkCache.computeIfAbsent(chunkKey, k -> world.getChunkAt(cx, cz));
-                    Block block = chunk.getBlock(nx & 15, ny, nz & 15);
-                    if (ny < hideBelow) {
-                        ctx.newVisibleSections.add(plugin.packSection(cx, ny >> 4, cz));
+
+        int yCeiling = hideBelow + 16;
+
+        final boolean skipCurrentChunk = !justEnteredZone;
+        bfsExecutor.submit(() -> {
+            try {
+                BFSContext ctx = bfsContexts.computeIfAbsent(playerId, k -> new BFSContext());
+                ctx.reset(startX, startY, startZ);
+                ctx.queueX[0] = startX;
+                ctx.queueY[0] = startY;
+                ctx.queueZ[0] = startZ;
+                ctx.tail = 1;
+                ctx.size = 1;
+                ctx.visitedBlocks.add(plugin.packCoord(startX, startY, startZ));
+
+                int maxDistance = 64;
+                int maxDistSq = maxDistance * maxDistance;
+                int maxYDistance = 32;
+
+                while (ctx.size > 0) {
+                    int x = ctx.queueX[ctx.head];
+                    int y = ctx.queueY[ctx.head];
+                    int z = ctx.queueZ[ctx.head];
+                    ctx.head = (ctx.head + 1) % BFSContext.QUEUE_CAPACITY;
+                    ctx.size--;
+                    int dx = x - ctx.startX;
+                    int dy = y - ctx.startY;
+                    int dz = z - ctx.startZ;
+                    if (dx * dx + dy * dy + dz * dz > maxDistSq) continue;
+                    int absYDist = dy < 0 ? -dy : dy;
+                    if (y < hideBelow && absYDist <= maxYDistance) {
+                        ctx.newVisibleSections.add(plugin.packSection(x >> 4, y >> 4, z >> 4));
+                        ctx.visibleBlocks.add(plugin.packCoord(x, y, z));
                     }
-                    if (!block.getType().isOccluding() || block.getLightFromSky() == 15) {
-                        if (size < 100000) {
-                            ctx.queueX[tail] = nx;
-                            ctx.queueY[tail] = ny;
-                            ctx.queueZ[tail] = nz;
-                            tail = (tail + 1) % 100000;
-                            size++;
+                    for (int[] n : NEIGHBORS) {
+                        int nx = x + n[0], ny = y + n[1], nz = z + n[2];
+                        if (ny < minHeight || ny >= yCeiling) continue;
+                        long key = plugin.packCoord(nx, ny, nz);
+                        if (ctx.visitedBlocks.add(key)) {
+                            int cx = nx >> 4;
+                            int cz = nz >> 4;
+                            if (!world.isChunkLoaded(cx, cz)) continue;
+                            long chunkKey = ((long)cx << 32) | (cz & 0xFFFFFFFFL);
+                            Chunk chunk = ctx.chunkCache.computeIfAbsent(chunkKey, k -> world.getChunkAt(cx, cz));
+                            Block block = chunk.getBlock(nx & 15, ny, nz & 15);
+                            int nyDist = ny - ctx.startY;
+                            int absNYDist = nyDist < 0 ? -nyDist : nyDist;
+                            if (ny < hideBelow && absNYDist <= maxYDistance) {
+                                ctx.newVisibleSections.add(plugin.packSection(cx, ny >> 4, cz));
+                            }
+                            if (!block.getType().isOccluding() || block.getLightFromSky() == 15) {
+                                if (ctx.size < BFSContext.QUEUE_CAPACITY) {
+                                    ctx.queueX[ctx.tail] = nx;
+                                    ctx.queueY[ctx.tail] = ny;
+                                    ctx.queueZ[ctx.tail] = nz;
+                                    ctx.tail = (ctx.tail + 1) % BFSContext.QUEUE_CAPACITY;
+                                    ctx.size++;
+                                }
+                            }
                         }
                     }
                 }
+                ctx.chunkCache.clear();
+
+                LongHashSet resultVisibleBlocks = new LongHashSet(ctx.visibleBlocks.size());
+                ctx.visibleBlocks.forEach(resultVisibleBlocks::add);
+
+                LongHashSet resultSections = new LongHashSet(ctx.newVisibleSections.size());
+                ctx.newVisibleSections.forEach(resultSections::add);
+
+                int visitedSize = ctx.visitedBlocks.size();
+                int sectionSize = ctx.newVisibleSections.size();
+
+                Player onlinePlayer = plugin.getServer().getPlayer(playerId);
+                if (onlinePlayer == null || !onlinePlayer.isOnline()) return;
+
+                onlinePlayer.getScheduler().run(plugin, (task) -> {
+                    applyBFSResults(onlinePlayer, resultVisibleBlocks, resultSections, visitedSize, sectionSize, skipCurrentChunk);
+                }, null);
+            } catch (Exception e) {
+                plugin.getLogger().warning("BFS error for " + playerId + ": " + e.getMessage());
+            } finally {
+                bfsRunning.remove(playerId);
             }
-            blocksChecked++;
-        }
-        plugin.setVisibleBlocks(player.getUniqueId(), ctx.visibleBlocks);
-        updateEntitiesVisibility(player, ctx.visibleBlocks);
+        });
+    }
+
+    private void applyBFSResults(Player player, LongHashSet visibleBlocks, LongHashSet newVisibleSections, int visitedSize, int sectionSize, boolean skipCurrentChunk) {
+        UUID playerId = player.getUniqueId();
+        World world = player.getWorld();
+
+        plugin.setVisibleBlocks(playerId, visibleBlocks);
+        updateEntitiesVisibility(player, visibleBlocks);
+
+        int playerChunkX = player.getLocation().getBlockX() >> 4;
+        int playerChunkZ = player.getLocation().getBlockZ() >> 4;
+        String playerChunkKey = playerChunkX + "," + playerChunkZ;
+
         Set<String> refreshedChunks = new HashSet<>();
-        LongHashSet oldVisibleSet = playerVisibleSections.get(player.getUniqueId());
-        ctx.newVisibleSections.forEach(sectionKey -> {
+        if (skipCurrentChunk) {
+            refreshedChunks.add(playerChunkKey);
+        }
+        LongHashSet oldVisibleSet = playerVisibleSections.get(playerId);
+
+        newVisibleSections.forEach(sectionKey -> {
             int[] coords = plugin.unpackSection(sectionKey);
-            if (!plugin.isSectionVisible(player.getUniqueId(), coords[0], coords[1], coords[2])) {
-                plugin.updateSectionVisibility(player.getUniqueId(), coords[0], coords[1], coords[2], true);
+            if (!plugin.isSectionVisible(playerId, coords[0], coords[1], coords[2])) {
+                plugin.updateSectionVisibility(playerId, coords[0], coords[1], coords[2], true);
                 String chunkKeyStr = coords[0] + "," + coords[2];
                 if (!refreshedChunks.contains(chunkKeyStr)) {
                     if (world.isChunkLoaded(coords[0], coords[2])) {
@@ -176,11 +228,12 @@ public class MovementListener implements Listener {
                 }
             }
         });
+
         if (oldVisibleSet != null) {
             oldVisibleSet.forEach(oldKey -> {
-                if (!ctx.newVisibleSections.contains(oldKey)) {
+                if (!newVisibleSections.contains(oldKey)) {
                     int[] coords = plugin.unpackSection(oldKey);
-                    plugin.updateSectionVisibility(player.getUniqueId(), coords[0], coords[1], coords[2], false);
+                    plugin.updateSectionVisibility(playerId, coords[0], coords[1], coords[2], false);
                     String chunkKeyStr = coords[0] + "," + coords[2];
                     if (!refreshedChunks.contains(chunkKeyStr)) {
                         if (world.isChunkLoaded(coords[0], coords[2])) {
@@ -191,12 +244,11 @@ public class MovementListener implements Listener {
                 }
             });
         }
-        LongHashSet savedSections = new LongHashSet(ctx.newVisibleSections.size());
-        ctx.newVisibleSections.forEach(savedSections::add);
-        playerVisibleSections.put(player.getUniqueId(), savedSections);
-        if (plugin.isDebugEnabled(player.getUniqueId()) && !refreshedChunks.isEmpty()) {
+        playerVisibleSections.put(playerId, newVisibleSections);
+
+        if (plugin.isDebugEnabled(playerId) && !refreshedChunks.isEmpty()) {
             player.sendActionBar(MiniMessage.miniMessage().deserialize(
-                "<gray>[<gold>AntiBase</gold>]</gray> <green>Visible:</green> <yellow>" + ctx.visitedBlocks.size() + "</yellow> <gray>|</gray> <green>Sections:</green> <yellow>" + ctx.newVisibleSections.size() + "</yellow>"
+                "<gray>[<gold>AntiBase</gold>]</gray> <green>Visible:</green> <yellow>" + visitedSize + "</yellow> <gray>|</gray> <green>Sections:</green> <yellow>" + sectionSize + "</yellow>"
             ));
         }
     }
@@ -215,11 +267,17 @@ public class MovementListener implements Listener {
             double dy = other.getLocation().getY() - py;
             double dz = other.getLocation().getZ() - pz;
             if (dx * dx + dy * dy + dz * dz > 25600) continue;
-            int ey = other.getLocation().getBlockY();
+            Location otherLoc = other.getLocation();
+            int ey = otherLoc.getBlockY();
             if (ey < hideBelow && visibleBlocks != null) {
-                boolean visible = visibleBlocks.contains(plugin.packCoord(
-                    other.getLocation().getBlockX(), ey, other.getLocation().getBlockZ()));
-                setPlayerVisibility(player, other, visible);
+                Material standingIn = otherLoc.getBlock().getType();
+                if (PASSTHROUGH_BLOCKS.contains(standingIn)) {
+                    setPlayerVisibility(player, other, true);
+                } else {
+                    boolean visible = visibleBlocks.contains(plugin.packCoord(
+                        otherLoc.getBlockX(), ey, otherLoc.getBlockZ()));
+                    setPlayerVisibility(player, other, visible);
+                }
             } else {
                 setPlayerVisibility(player, other, true);
             }
@@ -227,11 +285,17 @@ public class MovementListener implements Listener {
 
         for (Entity e : player.getNearbyEntities(48, 48, 48)) {
             if (e instanceof Player) continue;
-            int ey = e.getLocation().getBlockY();
+            Location eLoc = e.getLocation();
+            int ey = eLoc.getBlockY();
             if (ey < hideBelow && visibleBlocks != null) {
-                boolean visible = visibleBlocks.contains(plugin.packCoord(
-                    e.getLocation().getBlockX(), ey, e.getLocation().getBlockZ()));
-                setEntityVisibility(player, e, visible);
+                Material standingIn = eLoc.getBlock().getType();
+                if (PASSTHROUGH_BLOCKS.contains(standingIn)) {
+                    setEntityVisibility(player, e, true);
+                } else {
+                    boolean visible = visibleBlocks.contains(plugin.packCoord(
+                        eLoc.getBlockX(), ey, eLoc.getBlockZ()));
+                    setEntityVisibility(player, e, visible);
+                }
             }
         }
     }
@@ -239,11 +303,12 @@ public class MovementListener implements Listener {
     public void updateOthersViewOfPlayer(Player movingPlayer) {
         if (obfuscator.isWorldBlacklisted(movingPlayer.getWorld())) return;
         int hideBelow = obfuscator.getHideBelowY();
-        int ex = movingPlayer.getLocation().getBlockX();
-        int ey = movingPlayer.getLocation().getBlockY();
-        int ez = movingPlayer.getLocation().getBlockZ();
+        Location movingLoc = movingPlayer.getLocation();
+        int ex = movingLoc.getBlockX();
+        int ey = movingLoc.getBlockY();
+        int ez = movingLoc.getBlockZ();
 
-        if (ey >= hideBelow) {
+        if (ey >= hideBelow || PASSTHROUGH_BLOCKS.contains(movingLoc.getBlock().getType())) {
             for (Player other : movingPlayer.getWorld().getPlayers()) {
                 if (other.equals(movingPlayer)) continue;
                 double dx = other.getLocation().getX() - movingPlayer.getLocation().getX();
@@ -289,10 +354,22 @@ public class MovementListener implements Listener {
         }
     }
 
+    public void shutdown() {
+        bfsExecutor.shutdown();
+        try {
+            if (!bfsExecutor.awaitTermination(5, TimeUnit.SECONDS)) {
+                bfsExecutor.shutdownNow();
+            }
+        } catch (InterruptedException e) {
+            bfsExecutor.shutdownNow();
+        }
+    }
+
     public void cleanupPlayer(UUID uuid) {
         bfsContexts.remove(uuid);
         lastBFSPosition.remove(uuid);
         lastUpdateTick.remove(uuid);
         playerVisibleSections.remove(uuid);
+        bfsRunning.remove(uuid);
     }
 }
