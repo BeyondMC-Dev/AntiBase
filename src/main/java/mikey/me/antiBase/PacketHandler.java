@@ -8,19 +8,16 @@ import com.github.retrooper.packetevents.protocol.packettype.PacketTypeCommon;
 import com.github.retrooper.packetevents.wrapper.play.server.*;
 import com.github.retrooper.packetevents.protocol.world.chunk.Column;
 import com.github.retrooper.packetevents.protocol.world.chunk.BaseChunk;
-import org.bukkit.plugin.Plugin;
 import org.bukkit.entity.Player;
-import org.bukkit.Material;
 import java.util.UUID;
 import java.util.List;
 import java.util.ArrayList;
-import io.github.retrooper.packetevents.util.SpigotConversionUtil;
 
 public class PacketHandler extends PacketListenerAbstract {
     private final BaseObfuscator obfuscator;
-    private final Plugin plugin;
+    private final AntiBase plugin;
 
-    public PacketHandler(Plugin plugin, BaseObfuscator obfuscator) {
+    public PacketHandler(AntiBase plugin, BaseObfuscator obfuscator) {
         super(PacketListenerPriority.HIGH);
         this.plugin = plugin;
         this.obfuscator = obfuscator;
@@ -29,7 +26,8 @@ public class PacketHandler extends PacketListenerAbstract {
     @Override
     public void onPacketSend(PacketSendEvent event) {
         try {
-            Player player = (Player) event.getPlayer();
+            if (!plugin.isObfuscationEnabled()) return;
+            Player player = event.getPlayer();
             if (player == null) return;
             if (obfuscator.isWorldBlacklisted(player.getWorld())) return;
             UUID playerId = player.getUniqueId();
@@ -46,30 +44,22 @@ public class PacketHandler extends PacketListenerAbstract {
                         int minHeight = player.getWorld().getMinHeight();
                         int chunkX = column.getX();
                         int chunkZ = column.getZ();
-                        int playerChunkX = player.getLocation().getBlockX() >> 4;
-                        int playerChunkZ = player.getLocation().getBlockZ() >> 4;
-                        int playerY = player.getLocation().getBlockY();
-                        
-                        int distX = Math.abs(chunkX - playerChunkX);
-                        int distZ = Math.abs(chunkZ - playerChunkZ);
-                        boolean isNearChunk = (distX <= 1 && distZ <= 1);
 
                         for (int i = 0; i < chunks.length; i++) {
                             BaseChunk section = chunks[i];
                             if (section == null) continue;
                             
                             int sectionBaseY = minHeight + (i * 16);
-                            int sectionMaxY = sectionBaseY + 16;
+                            int sectionMaxY = sectionBaseY + 15;
 
-                            if (sectionMaxY <= hideBelow) {
-                                boolean isNearY = (playerY >= sectionBaseY - 32 && playerY <= sectionMaxY + 32);
-                                
-                                if (isNearChunk && isNearY) {
-                                    continue; 
-                                }
-
-                                if (plugin instanceof AntiBase && !((AntiBase) plugin).isSectionVisible(playerId, chunkX, sectionBaseY >> 4, chunkZ)) {
+                            if (sectionMaxY < hideBelow) {
+                                if (!plugin.isSectionVisible(playerId, chunkX, sectionBaseY >> 4, chunkZ)) {
                                     clearChunkSection(section);
+                                    modified = true;
+                                }
+                            } else if (sectionBaseY < hideBelow) {
+                                if (!plugin.isSectionVisible(playerId, chunkX, sectionBaseY >> 4, chunkZ)) {
+                                    clearPartialSection(section, 0, hideBelow - sectionBaseY);
                                     modified = true;
                                 }
                             }
@@ -89,28 +79,47 @@ public class PacketHandler extends PacketListenerAbstract {
                 return;
             }
 
-            // this might work?? 
+            if (type.getName().equals(PacketType.Play.Server.MULTI_BLOCK_CHANGE.getName())) {
+                WrapperPlayServerMultiBlockChange multiChange = new WrapperPlayServerMultiBlockChange(event);
+                int hideBelow = obfuscator.getHideBelowY();
+                int proximity = obfuscator.getProximityDistance();
+                WrapperPlayServerMultiBlockChange.EncodedBlock[] blocks = multiChange.getBlocks();
+                boolean changed = false;
+                for (WrapperPlayServerMultiBlockChange.EncodedBlock block : blocks) {
+                    int by = block.getY();
+                    if (by < hideBelow) {
+                        double dx = player.getLocation().getX() - block.getX();
+                        double dy = player.getLocation().getY() - by;
+                        double dz = player.getLocation().getZ() - block.getZ();
+                        if (dx * dx + dy * dy + dz * dz > (double) proximity * proximity) {
+                            block.setBlockID(obfuscator.getReplacementBlockStateId());
+                            changed = true;
+                        }
+                    }
+                }
+                if (changed) {
+                    multiChange.setBlocks(blocks);
+                }
+                return;
+            }
 
             if (type.getName().equals(PacketType.Play.Server.PLAYER_INFO_REMOVE.getName())) {
                 WrapperPlayServerPlayerInfoRemove removeInfo = new WrapperPlayServerPlayerInfoRemove(event);
                 List<UUID> uuids = removeInfo.getProfileIds();
                 List<UUID> newUUIDs = new ArrayList<>();
                 boolean changed = false;
-                if (plugin instanceof AntiBase) {
-                    AntiBase antiBase = (AntiBase) plugin;
-                    for (UUID uuid : uuids) {
-                        if (antiBase.isHidden(playerId, uuid)) {
-                            changed = true;
-                        } else {
-                            newUUIDs.add(uuid);
-                        }
+                for (UUID uuid : uuids) {
+                    if (plugin.isHidden(playerId, uuid)) {
+                        changed = true;
+                    } else {
+                        newUUIDs.add(uuid);
                     }
-                    if (changed) {
-                        if (newUUIDs.isEmpty()) {
-                            event.setCancelled(true);
-                        } else {
-                            removeInfo.setProfileIds(newUUIDs);
-                        }
+                }
+                if (changed) {
+                    if (newUUIDs.isEmpty()) {
+                        event.setCancelled(true);
+                    } else {
+                        removeInfo.setProfileIds(newUUIDs);
                     }
                 }
             }
@@ -123,23 +132,20 @@ public class PacketHandler extends PacketListenerAbstract {
 
     private void handleSingleBlockUpdate(Player player, int bx, int by, int bz, WrapperPlayServerBlockChange packet) {
         int hideBelow = obfuscator.getHideBelowY();
-        if (by <= hideBelow) {
+        if (by < hideBelow) {
             int proximity = obfuscator.getProximityDistance();
-            int dx = (int) (player.getLocation().getX() - bx);
-            int dy = (int) (player.getLocation().getY() - by);
-            int dz = (int) (player.getLocation().getZ() - bz);
-            int proximityLimit = Math.max(proximity, 64);
-            if (dx * dx + dy * dy + dz * dz > proximityLimit * proximityLimit) {
-                Material replacement = obfuscator.getReplacementBlock();
-                packet.setBlockState(SpigotConversionUtil.fromBukkitBlockData(replacement.createBlockData()));
+            double dx = player.getLocation().getX() - bx;
+            double dy = player.getLocation().getY() - by;
+            double dz = player.getLocation().getZ() - bz;
+            if (dx * dx + dy * dy + dz * dz > (double) proximity * proximity) {
+                packet.setBlockState(obfuscator.getReplacementBlockState());
             }
         }
     }
 
     private void clearChunkSection(BaseChunk section) {
         try {
-            Material replacement = obfuscator.getReplacementBlock();
-            int globalId = SpigotConversionUtil.fromBukkitBlockData(replacement.createBlockData()).getGlobalId();
+            int globalId = obfuscator.getReplacementBlockStateId();
             for (int x = 0; x < 16; x++) {
                 for (int z = 0; z < 16; z++) {
                     for (int y = 0; y < 16; y++) {
@@ -149,6 +155,21 @@ public class PacketHandler extends PacketListenerAbstract {
             }
         } catch (Exception e) {
             plugin.getLogger().severe("Error clearing chunk section: " + e.getMessage());
+        }
+    }
+
+    private void clearPartialSection(BaseChunk section, int fromLocalY, int toLocalY) {
+        try {
+            int globalId = obfuscator.getReplacementBlockStateId();
+            for (int x = 0; x < 16; x++) {
+                for (int z = 0; z < 16; z++) {
+                    for (int y = fromLocalY; y < toLocalY; y++) {
+                        section.set(x, y, z, globalId);
+                    }
+                }
+            }
+        } catch (Exception e) {
+            plugin.getLogger().severe("Error clearing partial chunk section: " + e.getMessage());
         }
     }
 }
