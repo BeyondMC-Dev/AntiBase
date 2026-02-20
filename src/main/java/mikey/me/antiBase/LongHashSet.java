@@ -18,7 +18,7 @@ public class LongHashSet {
     }
 
     public synchronized boolean add(long value) {
-        if (value == EMPTY) value = Long.MIN_VALUE + 1;
+        if (value == EMPTY) value = Long.MIN_VALUE + 1; // EMPTY is sentinel
         int idx = mix(value) & mask;
         int firstTombstone = -1;
         while (true) {
@@ -50,6 +50,7 @@ public class LongHashSet {
 
     private static final long TOMBSTONE = Long.MIN_VALUE + 2;
 
+    /** remove value, leave tombstone so probe chain stays valid */
     public synchronized boolean remove(long value) {
         if (value == EMPTY) value = Long.MIN_VALUE + 1;
         int idx = mix(value) & mask;
@@ -87,6 +88,7 @@ public class LongHashSet {
         void accept(long value);
     }
 
+    /** double table size and rehash */
     private void grow() {
         long[] old = table;
         int newCapacity = old.length * 2;
@@ -100,15 +102,17 @@ public class LongHashSet {
         }
     }
 
+    /** hash long so both halves matter (good for packed coords) */
     private static int mix(long key) {
         key ^= (key >>> 33);
         key *= 0xff51afd7ed558ccdL;
         key ^= (key >>> 33);
         key *= 0xc4ceb9fe1a85ec53L;
         key ^= (key >>> 33);
-        return (int) key;
+        return (int) (key ^ (key >>> 32));
     }
 
+    /** next power of two >= cap, clamp for max array size */
     private static int tableSizeFor(int cap) {
         int n = -1 >>> Integer.numberOfLeadingZeros(cap - 1);
         return (n < 16) ? 16 : (n >= (1 << 30)) ? (1 << 30) : n + 1;

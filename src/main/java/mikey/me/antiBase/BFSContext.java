@@ -4,6 +4,7 @@ import org.bukkit.Chunk;
 
 import java.util.HashMap;
 
+// reused per player for flood-fill, ring buffer queue
 class BFSContext {
     static final int QUEUE_CAPACITY = 100000;
     final int[] queueX = new int[QUEUE_CAPACITY];

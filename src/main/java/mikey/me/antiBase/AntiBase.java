@@ -89,6 +89,7 @@ public final class AntiBase extends JavaPlugin {
         visibleBlocks.put(playerId, blocks);
     }
 
+    // pack block coords into one long for set lookups
     public long packCoord(int x, int y, int z) {
         return (((long)x & 0x3FFFFFFL) << 38) | (((long)z & 0x3FFFFFFL) << 12) | ((long)y & 0xFFFL);
     }
@@ -97,6 +98,7 @@ public final class AntiBase extends JavaPlugin {
         return ((long) (x & 0x3FFFFF) << 42) | ((long) (z & 0x3FFFFF) << 20) | (y & 0xFF);
     }
 
+    /** unpack section key to [chunkX, sectionY, chunkZ]; sign-extend for negative coords */
     public int[] unpackSection(long key) {
         int cx = (int)((key >> 42) & 0x3FFFFF);
         int cz = (int)((key >> 20) & 0x3FFFFF);

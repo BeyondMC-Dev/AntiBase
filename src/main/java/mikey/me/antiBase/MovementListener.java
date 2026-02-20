@@ -23,6 +23,7 @@ import java.util.concurrent.TimeUnit;
 
 public class MovementListener implements Listener {
     private static final int[][] NEIGHBORS = {{1,0,0}, {-1,0,0}, {0,1,0}, {0,-1,0}, {0,0,1}, {0,0,-1}};
+    private static final int[] TRY_ORDER = {1, -1, 0};
     private final AntiBase plugin;
     private final BaseObfuscator obfuscator;
     private final ExecutorService bfsExecutor = Executors.newFixedThreadPool(2);
@@ -37,13 +38,14 @@ public class MovementListener implements Listener {
         this.obfuscator = obfuscator;
     }
 
+    /** check if we should run bfs (throttle, moved enough), then update visibility and other players' view of this one */
     private void update(Location to, Location from, Player player) {
         if (!plugin.isObfuscationEnabled()) return;
         if (from.getBlockX() == to.getBlockX() && from.getBlockZ() == to.getBlockZ() && from.getBlockY() == to.getBlockY()) return;
         if (obfuscator.isWorldBlacklisted(player.getWorld())) return;
         long currentTick = player.getWorld().getFullTime();
         long lastUpdate = lastUpdateTick.getOrDefault(player.getUniqueId(), 0L);
-        if (currentTick - lastUpdate < 5) return;
+        if (currentTick - lastUpdate < 5) return; // throttle bfs updates
         lastUpdateTick.put(player.getUniqueId(), currentTick);
 
         int bx = to.getBlockX();
@@ -77,6 +79,7 @@ public class MovementListener implements Listener {
         update(event.getTo(), event.getFrom(), event.getPlayer());
     }
 
+    /** flood-fill from player pos (async), then apply on main thread + refresh chunks */
     public void updateVisibility(Player player) {
         if (obfuscator.isWorldBlacklisted(player.getWorld())) return;
         int hideBelow = obfuscator.getHideBelowY();
@@ -89,7 +92,7 @@ public class MovementListener implements Listener {
             return;
         }
 
-        if (!bfsRunning.add(playerId)) return;
+        if (!bfsRunning.add(playerId)) return; // already running for this player
 
         World world = player.getWorld();
         int minHeight = world.getMinHeight();
@@ -103,14 +106,45 @@ public class MovementListener implements Listener {
 
         bfsExecutor.submit(() -> {
             try {
+                int bfsStartX = startX, bfsStartY = startY, bfsStartZ = startZ;
+                int cX = startX >> 4, cZ = startZ >> 4;
+                if (world.isChunkLoaded(cX, cZ)) {
+                    Chunk center = world.getChunkAt(cX, cZ);
+                    // start from air if player is inside a block (glitch/lag)
+                    if (center.getBlock(startX & 15, startY, startZ & 15).getType().isOccluding()) {
+                        outer:
+                        for (int dy : TRY_ORDER) {
+                            int ty = startY + dy;
+                            if (ty < minHeight || ty >= yCeiling) continue;
+                            if (dy != 0) {
+                                if (!center.getBlock(startX & 15, ty, startZ & 15).getType().isOccluding()) {
+                                    bfsStartY = ty;
+                                    break outer;
+                                }
+                            } else {
+                                for (int dx = -1; dx <= 1; dx++) {
+                                    for (int dz = -1; dz <= 1; dz++) {
+                                        if (dx == 0 && dz == 0) continue;
+                                        int tx = startX + dx, tz = startZ + dz;
+                                        if (!world.isChunkLoaded(tx >> 4, tz >> 4)) continue;
+                                        if (!world.getChunkAt(tx >> 4, tz >> 4).getBlock(tx & 15, ty, tz & 15).getType().isOccluding()) {
+                                            bfsStartX = tx; bfsStartY = ty; bfsStartZ = tz;
+                                            break outer;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
                 BFSContext ctx = bfsContexts.computeIfAbsent(playerId, k -> new BFSContext());
-                ctx.reset(startX, startY, startZ);
-                ctx.queueX[0] = startX;
-                ctx.queueY[0] = startY;
-                ctx.queueZ[0] = startZ;
+                ctx.reset(bfsStartX, bfsStartY, bfsStartZ);
+                ctx.queueX[0] = bfsStartX;
+                ctx.queueY[0] = bfsStartY;
+                ctx.queueZ[0] = bfsStartZ;
                 ctx.tail = 1;
                 ctx.size = 1;
-                ctx.visitedBlocks.add(plugin.packCoord(startX, startY, startZ));
+                ctx.visitedBlocks.add(plugin.packCoord(bfsStartX, bfsStartY, bfsStartZ));
 
                 int maxDistance = 64;
                 int maxDistSq = maxDistance * maxDistance;
@@ -139,23 +173,26 @@ public class MovementListener implements Listener {
                             int cx = nx >> 4;
                             int cz = nz >> 4;
                             if (!world.isChunkLoaded(cx, cz)) continue;
-                            ctx.visitedBlocks.add(key);
                             long chunkKey = ((long)cx << 32) | (cz & 0xFFFFFFFFL);
                             Chunk chunk = ctx.chunkCache.computeIfAbsent(chunkKey, k -> world.getChunkAt(cx, cz));
                             Block block = chunk.getBlock(nx & 15, ny, nz & 15);
+                            if (block.getType().isOccluding()) {
+                                ctx.visitedBlocks.add(key);
+                                continue;
+                            }
                             int nyDist = ny - ctx.startY;
                             int absNYDist = nyDist < 0 ? -nyDist : nyDist;
-                            if (!block.getType().isOccluding()) {
-                                if (ny < hideBelow && absNYDist <= maxYDistance) {
-                                    ctx.newVisibleSections.add(plugin.packSection(cx, ny >> 4, cz));
-                                }
-                                if (ctx.size < BFSContext.QUEUE_CAPACITY) {
-                                    ctx.queueX[ctx.tail] = nx;
-                                    ctx.queueY[ctx.tail] = ny;
-                                    ctx.queueZ[ctx.tail] = nz;
-                                    ctx.tail = (ctx.tail + 1) % BFSContext.QUEUE_CAPACITY;
-                                    ctx.size++;
-                                }
+                            if (ny < hideBelow && absNYDist <= maxYDistance) {
+                                ctx.newVisibleSections.add(plugin.packSection(cx, ny >> 4, cz));
+                            }
+                            // only mark visited when we actually enqueue (else we'd cut off areas when queue is full)
+                            if (ctx.size < BFSContext.QUEUE_CAPACITY) {
+                                ctx.visitedBlocks.add(key);
+                                ctx.queueX[ctx.tail] = nx;
+                                ctx.queueY[ctx.tail] = ny;
+                                ctx.queueZ[ctx.tail] = nz;
+                                ctx.tail = (ctx.tail + 1) % BFSContext.QUEUE_CAPACITY;
+                                ctx.size++;
                             }
                         }
                     }
@@ -185,6 +222,7 @@ public class MovementListener implements Listener {
         });
     }
 
+    /** main thread: store results, refresh chunks that changed, update who sees who, debug action bar */
     private void applyBFSResults(Player player, LongHashSet visibleBlocks, LongHashSet newVisibleSections, int visitedSize, int sectionSize) {
         UUID playerId = player.getUniqueId();
         World world = player.getWorld();

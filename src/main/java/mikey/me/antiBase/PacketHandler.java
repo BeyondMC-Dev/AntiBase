@@ -34,6 +34,7 @@ public class PacketHandler extends PacketListenerAbstract {
             PacketTypeCommon type = event.getPacketType();
 
             if (type.getName().equals(PacketType.Play.Server.CHUNK_DATA.getName())) {
+                // hide sections below y that player can't see (flood-fill result)
                 WrapperPlayServerChunkData chunkData = new WrapperPlayServerChunkData(event);
                 Column column = chunkData.getColumn();
                 if (column != null) {
@@ -92,7 +93,7 @@ public class PacketHandler extends PacketListenerAbstract {
                         double dy = player.getLocation().getY() - by;
                         double dz = player.getLocation().getZ() - block.getZ();
                         if (dx * dx + dy * dy + dz * dz > (double) proximity * proximity) {
-                            block.setBlockID(obfuscator.getReplacementBlockStateId());
+                            block.setBlockId(BaseObfuscator.getAirBlockStateId());
                             changed = true;
                         }
                     }
@@ -138,18 +139,18 @@ public class PacketHandler extends PacketListenerAbstract {
             double dy = player.getLocation().getY() - by;
             double dz = player.getLocation().getZ() - bz;
             if (dx * dx + dy * dy + dz * dz > (double) proximity * proximity) {
-                packet.setBlockState(obfuscator.getReplacementBlockState());
+                packet.setBlockState(BaseObfuscator.getAirBlockState());
             }
         }
     }
 
+    // fill with air so client sees nothing, minimal packet size
     private void clearChunkSection(BaseChunk section) {
         try {
-            int globalId = obfuscator.getReplacementBlockStateId();
             for (int x = 0; x < 16; x++) {
                 for (int z = 0; z < 16; z++) {
                     for (int y = 0; y < 16; y++) {
-                        section.set(x, y, z, globalId);
+                        section.set(x, y, z, BaseObfuscator.getAirBlockStateId());
                     }
                 }
             }
@@ -158,13 +159,13 @@ public class PacketHandler extends PacketListenerAbstract {
         }
     }
 
+    /** only clear local y range (section that crosses hideBelow - we don't wipe the part above) */
     private void clearPartialSection(BaseChunk section, int fromLocalY, int toLocalY) {
         try {
-            int globalId = obfuscator.getReplacementBlockStateId();
             for (int x = 0; x < 16; x++) {
                 for (int z = 0; z < 16; z++) {
                     for (int y = fromLocalY; y < toLocalY; y++) {
-                        section.set(x, y, z, globalId);
+                        section.set(x, y, z, BaseObfuscator.getAirBlockStateId());
                     }
                 }
             }
