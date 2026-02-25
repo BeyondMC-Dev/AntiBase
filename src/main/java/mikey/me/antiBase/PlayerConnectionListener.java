@@ -29,6 +29,7 @@ public class PlayerConnectionListener implements Listener {
         }, null, 5L);
     }
 
+    /** chunk just loaded near someone - refresh their visibility so the new chunk sends correct hidden/shown sections */
     @EventHandler
     public void onChunkLoad(ChunkLoadEvent event) {
         if (!plugin.isObfuscationEnabled()) return;

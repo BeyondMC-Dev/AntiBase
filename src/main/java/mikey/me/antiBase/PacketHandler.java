@@ -34,6 +34,7 @@ public class PacketHandler extends PacketListenerAbstract {
             PacketTypeCommon type = event.getPacketType();
 
             if (type.getName().equals(PacketType.Play.Server.CHUNK_DATA.getName())) {
+                // hide sections below y that player can't see (flood-fill result)
                 WrapperPlayServerChunkData chunkData = new WrapperPlayServerChunkData(event);
                 Column column = chunkData.getColumn();
                 if (column != null) {
@@ -125,18 +126,18 @@ public class PacketHandler extends PacketListenerAbstract {
             int dz = (int) (player.getLocation().getZ() - bz);
             int proximityLimit = Math.max(proximity, 64);
             if (dx * dx + dy * dy + dz * dz > proximityLimit * proximityLimit) {
-                packet.setBlockState(obfuscator.getReplacementBlockState());
+                packet.setBlockState(BaseObfuscator.getAirBlockState());
             }
         }
     }
 
+    // fill with air so client sees nothing, minimal packet size
     private void clearChunkSection(BaseChunk section) {
         try {
-            int globalId = obfuscator.getReplacementBlockStateId();
             for (int x = 0; x < 16; x++) {
                 for (int z = 0; z < 16; z++) {
                     for (int y = 0; y < 16; y++) {
-                        section.set(x, y, z, globalId);
+                        section.set(x, y, z, BaseObfuscator.getAirBlockStateId());
                     }
                 }
             }
