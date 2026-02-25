@@ -7,6 +7,9 @@ import org.bukkit.event.Listener;
 import org.bukkit.event.block.BlockBreakEvent;
 
 public class MiningListener implements Listener {
+    private static final int BLOCK_UPDATE_RADIUS = 2;
+    private static final long BLOCK_UPDATE_DELAY_TICKS = 2L;
+    private static final int MINING_HEIGHT_SECTION_OFFSET = 16;
     private final AntiBase plugin;
     private final BaseObfuscator obfuscator;
 
@@ -24,7 +27,7 @@ public class MiningListener implements Listener {
         int hideBelow = obfuscator.getHideBelowY();
         int buffer = obfuscator.getProximityDistance();
         
-        if (y > (hideBelow + buffer + 16)) return;
+        if (y > (hideBelow + buffer + MINING_HEIGHT_SECTION_OFFSET)) return;
 
         Player player = event.getPlayer();
         int chunkX = block.getX() >> 4;
@@ -33,7 +36,7 @@ public class MiningListener implements Listener {
         plugin.updateSectionVisibility(player.getUniqueId(), chunkX, sectionY, chunkZ, true);
 
         player.getScheduler().runDelayed(plugin, (task) -> {
-            int radius = 2;
+            int radius = BLOCK_UPDATE_RADIUS;
             for (int x = -radius; x <= radius; x++) {
                 for (int dy = -radius; dy <= radius; dy++) {
                     for (int z = -radius; z <= radius; z++) {
@@ -46,6 +49,6 @@ public class MiningListener implements Listener {
                 }
             }
             plugin.getMovementListener().updateVisibility(player);
-        }, null, 2L);
+        }, null, BLOCK_UPDATE_DELAY_TICKS);
     }
 }

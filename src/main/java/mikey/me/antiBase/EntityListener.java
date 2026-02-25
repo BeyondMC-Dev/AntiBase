@@ -34,7 +34,7 @@ public class EntityListener implements Listener {
             double dx = p.getLocation().getX() - entity.getLocation().getX();
             double dy = p.getLocation().getY() - entity.getLocation().getY();
             double dz = p.getLocation().getZ() - entity.getLocation().getZ();
-            if (dx * dx + dy * dy + dz * dz > 25600) continue;
+            if (dx * dx + dy * dy + dz * dz > BaseObfuscator.ENTITY_VISIBILITY_RANGE_SQ) continue;
             if (ey < hideBelow) {
                 if (!plugin.isBlockVisible(p.getUniqueId(), ex, ey, ez)) {
                     if (entity instanceof Player) {

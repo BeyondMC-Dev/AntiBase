@@ -14,6 +14,9 @@ import java.util.List;
 import java.util.ArrayList;
 
 public class PacketHandler extends PacketListenerAbstract {
+    private static final int NEAR_CHUNK_THRESHOLD = 1;
+    private static final int NEAR_CHUNK_Y_BUFFER = 32;
+    private static final int MIN_BLOCK_UPDATE_PROXIMITY = 64;
     private final BaseObfuscator obfuscator;
     private final AntiBase plugin;
 
@@ -51,7 +54,7 @@ public class PacketHandler extends PacketListenerAbstract {
                         
                         int distX = Math.abs(chunkX - playerChunkX);
                         int distZ = Math.abs(chunkZ - playerChunkZ);
-                        boolean isNearChunk = (distX <= 1 && distZ <= 1);
+                        boolean isNearChunk = (distX <= NEAR_CHUNK_THRESHOLD && distZ <= NEAR_CHUNK_THRESHOLD);
 
                         for (int i = 0; i < chunks.length; i++) {
                             BaseChunk section = chunks[i];
@@ -61,7 +64,7 @@ public class PacketHandler extends PacketListenerAbstract {
                             int sectionMaxY = sectionBaseY + 16;
 
                             if (sectionMaxY <= hideBelow) {
-                                boolean isNearY = (playerY >= sectionBaseY - 32 && playerY <= sectionMaxY + 32);
+                                boolean isNearY = (playerY >= sectionBaseY - NEAR_CHUNK_Y_BUFFER && playerY <= sectionMaxY + NEAR_CHUNK_Y_BUFFER);
                                 
                                 if (isNearChunk && isNearY) {
                                     continue; 
@@ -124,7 +127,7 @@ public class PacketHandler extends PacketListenerAbstract {
             int dx = (int) (player.getLocation().getX() - bx);
             int dy = (int) (player.getLocation().getY() - by);
             int dz = (int) (player.getLocation().getZ() - bz);
-            int proximityLimit = Math.max(proximity, 64);
+            int proximityLimit = Math.max(proximity, MIN_BLOCK_UPDATE_PROXIMITY);
             if (dx * dx + dy * dy + dz * dz > proximityLimit * proximityLimit) {
                 packet.setBlockState(BaseObfuscator.getAirBlockState());
             }

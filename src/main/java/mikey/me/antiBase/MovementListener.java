@@ -32,6 +32,13 @@ public class MovementListener implements Listener {
         Material.WATER, Material.LAVA, Material.FIRE, Material.SOUL_FIRE,
         Material.SHORT_GRASS, Material.TALL_GRASS, Material.FERN, Material.LARGE_FERN
     );
+    private static final long BFS_THROTTLE_TICKS = 5;
+    private static final long BFS_RETRIGGER_DISTANCE_SQ = 4;
+    private static final int SURFACE_Y_BUFFER = 32;
+    private static final int BFS_Y_CEILING_OFFSET = 16;
+    private static final int BFS_MAX_HORIZONTAL_DISTANCE = 64;
+    private static final int BFS_MAX_Y_DISTANCE = 32;
+    private static final int NEARBY_ENTITY_SEARCH_RADIUS = 48;
     private final AntiBase plugin;
     private final BaseObfuscator obfuscator;
     private final ExecutorService bfsExecutor = Executors.newFixedThreadPool(2);
@@ -53,7 +60,7 @@ public class MovementListener implements Listener {
         if (obfuscator.isWorldBlacklisted(player.getWorld())) return;
         long currentTick = player.getWorld().getFullTime();
         long lastUpdate = lastUpdateTick.getOrDefault(player.getUniqueId(), 0L);
-        if (currentTick - lastUpdate < 5) return; // throttle bfs updates
+        if (currentTick - lastUpdate < BFS_THROTTLE_TICKS) return; // throttle bfs updates
         lastUpdateTick.put(player.getUniqueId(), currentTick);
 
         int bx = to.getBlockX();
@@ -65,7 +72,7 @@ public class MovementListener implements Listener {
             long dx = bx - lastPos[0];
             long dy = by - lastPos[1];
             long dz = bz - lastPos[2];
-            if (dx * dx + dy * dy + dz * dz >= 4) {
+            if (dx * dx + dy * dy + dz * dz >= BFS_RETRIGGER_DISTANCE_SQ) {
                 needsRestart = true;
             }
         }
@@ -94,7 +101,7 @@ public class MovementListener implements Listener {
         Location playerLoc = player.getLocation();
         UUID playerId = player.getUniqueId();
 
-        if (playerLoc.getBlockY() > hideBelow + 32) {
+        if (playerLoc.getBlockY() > hideBelow + SURFACE_Y_BUFFER) {
             // Clear visible sections when player is above ground so we refresh their chunk when they descend
             playerVisibleSections.remove(playerId);
             updateEntitiesVisibility(player, null);
@@ -115,7 +122,7 @@ public class MovementListener implements Listener {
         int startY = Math.max(minHeight, Math.min(maxHeight - 1, playerLoc.getBlockY()));
         int startZ = playerLoc.getBlockZ();
 
-        int yCeiling = hideBelow + 16;
+        int yCeiling = hideBelow + BFS_Y_CEILING_OFFSET;
 
         final boolean skipCurrentChunk = !justEnteredZone;
         bfsExecutor.submit(() -> {
@@ -160,9 +167,9 @@ public class MovementListener implements Listener {
                 ctx.size = 1;
                 ctx.visitedBlocks.add(plugin.packCoord(bfsStartX, bfsStartY, bfsStartZ));
 
-                int maxDistance = 64;
+                int maxDistance = BFS_MAX_HORIZONTAL_DISTANCE;
                 int maxDistSq = maxDistance * maxDistance;
-                int maxYDistance = 32;
+                int maxYDistance = BFS_MAX_Y_DISTANCE;
 
                 while (ctx.size > 0) {
                     int x = ctx.queueX[ctx.head];
@@ -304,7 +311,7 @@ public class MovementListener implements Listener {
             double dx = other.getLocation().getX() - px;
             double dy = other.getLocation().getY() - py;
             double dz = other.getLocation().getZ() - pz;
-            if (dx * dx + dy * dy + dz * dz > 25600) continue;
+            if (dx * dx + dy * dy + dz * dz > BaseObfuscator.ENTITY_VISIBILITY_RANGE_SQ) continue;
             Location otherLoc = other.getLocation();
             int ey = otherLoc.getBlockY();
             if (ey < hideBelow && visibleBlocks != null) {
@@ -321,7 +328,7 @@ public class MovementListener implements Listener {
             }
         }
 
-        for (Entity e : player.getNearbyEntities(48, 48, 48)) {
+        for (Entity e : player.getNearbyEntities(NEARBY_ENTITY_SEARCH_RADIUS, NEARBY_ENTITY_SEARCH_RADIUS, NEARBY_ENTITY_SEARCH_RADIUS)) {
             if (e instanceof Player) continue;
             Location eLoc = e.getLocation();
             int ey = eLoc.getBlockY();
@@ -352,7 +359,7 @@ public class MovementListener implements Listener {
                 double dx = other.getLocation().getX() - movingPlayer.getLocation().getX();
                 double dy = other.getLocation().getY() - movingPlayer.getLocation().getY();
                 double dz = other.getLocation().getZ() - movingPlayer.getLocation().getZ();
-                if (dx * dx + dy * dy + dz * dz > 25600) continue;
+                if (dx * dx + dy * dy + dz * dz > BaseObfuscator.ENTITY_VISIBILITY_RANGE_SQ) continue;
                 setPlayerVisibility(other, movingPlayer, true);
             }
             return;
@@ -363,7 +370,7 @@ public class MovementListener implements Listener {
             double dx = other.getLocation().getX() - movingPlayer.getLocation().getX();
             double dy = other.getLocation().getY() - movingPlayer.getLocation().getY();
             double dz = other.getLocation().getZ() - movingPlayer.getLocation().getZ();
-            if (dx * dx + dy * dy + dz * dz > 25600) continue;
+            if (dx * dx + dy * dy + dz * dz > BaseObfuscator.ENTITY_VISIBILITY_RANGE_SQ) continue;
 
             boolean shouldHide = !plugin.isBlockVisible(other.getUniqueId(), ex, ey, ez);
             setPlayerVisibility(other, movingPlayer, !shouldHide);

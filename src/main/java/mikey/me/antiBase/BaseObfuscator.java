@@ -13,6 +13,8 @@ public class BaseObfuscator {
     private static final int AIR_BLOCK_STATE_ID = 0;
     private static final WrappedBlockState AIR_BLOCK_STATE = SpigotConversionUtil.fromBukkitBlockData(Material.AIR.createBlockData());
 
+    public static final int ENTITY_VISIBILITY_RANGE_SQ = 25600;
+
     private final int hideBelowY;
     private final int proximityDistance;
     private final Material replacementBlock;

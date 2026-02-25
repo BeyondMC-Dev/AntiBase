@@ -9,6 +9,9 @@ import org.bukkit.event.player.PlayerQuitEvent;
 import org.bukkit.event.world.ChunkLoadEvent;
 
 public class PlayerConnectionListener implements Listener {
+    private static final int CHUNK_LOAD_PROXIMITY_THRESHOLD = 2;
+    private static final long JOIN_DELAY_TICKS = 5L;
+    private static final long CHUNK_LOAD_DELAY_TICKS = 1L;
     private final AntiBase plugin;
 
     public PlayerConnectionListener(AntiBase plugin) {
@@ -26,7 +29,7 @@ public class PlayerConnectionListener implements Listener {
         player.getScheduler().runDelayed(plugin, (task) -> {
             plugin.getMovementListener().updateVisibility(event.getPlayer());
             plugin.getMovementListener().updateOthersViewOfPlayer(event.getPlayer());
-        }, null, 5L);
+        }, null, JOIN_DELAY_TICKS);
     }
 
     /** chunk just loaded near someone - refresh their visibility so the new chunk sends correct hidden/shown sections */
@@ -42,12 +45,12 @@ public class PlayerConnectionListener implements Listener {
             int playerChunkZ = player.getLocation().getBlockZ() >> 4;
             int dx = Math.abs(chunkX - playerChunkX);
             int dz = Math.abs(chunkZ - playerChunkZ);
-            if (dx <= 2 && dz <= 2) {
+            if (dx <= CHUNK_LOAD_PROXIMITY_THRESHOLD && dz <= CHUNK_LOAD_PROXIMITY_THRESHOLD) {
                 player.getScheduler().runDelayed(plugin, (task) -> {
                     if (player.isOnline()) {
                         plugin.getMovementListener().updateVisibility(player);
                     }
-                }, null, 1L);
+                }, null, CHUNK_LOAD_DELAY_TICKS);
             }
         }
     }
